@@ -49,6 +49,7 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 	public var status: TransferStatus = .initializing { willSet { Task { @MainActor in await handleStatusChange(newValue) } } }
 	public var unlockData: [String: Data]!
 	public var deviceResponseBytes: Data?
+	public var onSuccess: (@Sendable (URL?) -> Void)?
 	/// response metadata array
 	public var responseMetadata: [Data?]!
 	var readBuffer = Data()
@@ -68,6 +69,10 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		initPeripheralManager()
 		initSuccess = true
 	}
+	
+	private func shouldUseDelay() -> Bool {
+		return self.numBlocks > 31
+	}
 
 	@objc(CBPeripheralManagerDelegate)
 	class Delegate: NSObject, CBPeripheralManagerDelegate {
@@ -76,9 +81,11 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		init(server: MdocGattServer) {
 			self.server = server
 		}
-
+		
 		func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
-			if server.sendBuffer.count > 0 { self.server.sendDataWithUpdates() }
+			if server.sendBuffer.count > 0 {
+				self.server.sendDataWithUpdates(self.server.shouldUseDelay())
+			}
 		}
 
 		func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
@@ -262,7 +269,7 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 			logger.info("Prepare \(bytesToSend.0.count) bytes to send")
 			prepareDataToSend(bytesToSend.0)
 			DispatchQueue.main.asyncAfter(deadline: .now()+0.2) {
-				self.sendDataWithUpdates()
+				self.sendDataWithUpdates(self.shouldUseDelay())
 			}
 		}
 		if !b { errorToSend = MdocHelpers.makeError(code: .userRejected) }
@@ -312,9 +319,10 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		}
 	}
 
-	func sendDataWithUpdates() {
+	func sendDataWithUpdates(_ withDelay: Bool) {
 		guard !isPreview else { return }
 		guard sendBuffer.count > 0 else {
+			self.onSuccess?(nil)
 			status = .responseSent
 			logger.info("Finished sending BLE data")
 			stop()
@@ -323,7 +331,13 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		let b = peripheralManager.updateValue(sendBuffer.first!, for: server2ClientCharacteristic, onSubscribedCentrals: [remoteCentral])
 		if b, sendBuffer.count > 0 {
 			sendBuffer.removeFirst()
-			sendDataWithUpdates()
+			if (withDelay){
+				DispatchQueue.main.asyncAfter(deadline: .now()+0.05) {
+					self.sendDataWithUpdates(withDelay)
+				}
+			} else {
+				self.sendDataWithUpdates(withDelay)
+			}
 		}
 	}
 
