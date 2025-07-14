@@ -13,7 +13,7 @@ let package = Package(
 			targets: ["MdocDataTransfer18013"])
 	],
 	dependencies: [
-		.package(path: "../eudi-lib-ios-iso18013-security")
+		.package(url: "https://github.com/rhbrunetto/eudi-lib-ios-iso18013-security.git", branch: "fix/ble-large-payload")
 	],
 	targets: [
 		// Targets are the basic building blocks of a package, defining a module or a test suite.
