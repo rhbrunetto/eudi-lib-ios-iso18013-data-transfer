@@ -58,6 +58,8 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 	var subscribeCount: Int = 0
 	var initSuccess:Bool = false
 
+	public var isAdvertising = false
+
 	public init(parameters: InitializeTransferData) throws {
 		let objs = parameters.toInitializeTransferInfo()
 		self.docs = objs.documentObjects.mapValues { IssuerSigned(data: $0.bytes) }.compactMapValues { $0 }
@@ -69,7 +71,7 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		initPeripheralManager()
 		initSuccess = true
 	}
-	
+
 	private func shouldUseDelay() -> Bool {
 		return self.numBlocks > 31
 	}
@@ -81,7 +83,11 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		init(server: MdocGattServer) {
 			self.server = server
 		}
-		
+
+		func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: (any Error)?) {
+			self.server.isAdvertising = true
+		}
+
 		func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
 			if server.sendBuffer.count > 0 {
 				self.server.sendDataWithUpdates(self.server.shouldUseDelay())
@@ -150,7 +156,8 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 	///
 	/// ``qrCodePayload`` is set to QR code data corresponding to the device engagement.
 	public func performDeviceEngagement(secureArea: any SecureArea, crv: CoseEcCurve, rfus: [String]? = nil) async throws {
-		guard !isPreview && !isInErrorState else {
+		self.isAdvertising = false
+		guard !isPreview else {
 			logger.info("Current status is \(status)")
 			return
 		}
@@ -168,7 +175,7 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		// todo: issuerNameSpaces is not mandatory according to specs, need to change
 		guard docs.values.allSatisfy({ $0.issuerNameSpaces != nil }) else { error = MdocHelpers.makeError(code: .invalidInputDocument); return }
 		// Check that the peripheral manager has been authorized to use Bluetooth.
-		startBleAdvertising()
+		await tryStartBleAdvertising(0, 3)
 	}
 
 	func buildServices(uuid: String) {
@@ -181,16 +188,44 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		peripheralManager.add(bleUserService)
 	}
 
+    func tryStartBleAdvertising(_ attempts: Int, _ maxAttempts: Int) async {
+		logger.info("F: Attempting \(attempts)")
+        guard attempts < maxAttempts else {
+            logger.error("F: Failed to start BLE advertising after \(maxAttempts) attempts")
+            error = MdocHelpers.makeError(code: .bleNotAuthorized, str: "Failed to start BLE advertising")
+            return
+        }
+		
+		do { try await Task.sleep(for: .milliseconds(500)) } catch { logger.error("F: Sleep interrupted: \(error.localizedDescription)") }
+		
+		if (attempts == 0) {
+			startBleAdvertising()
+		} else if (attempts > 0 && peripheralManager.state != .resetting) { // Don't try again if peripheral is resetting (startBleAdvertising will do so)
+			startBleAdvertising()
+		}
+		
+		do { try await Task.sleep(for: .seconds(2)) } catch { logger.error("F: Sleep interrupted: \(error.localizedDescription)") }
+       
+		if  !isAdvertising {
+            await tryStartBleAdvertising(attempts + 1, maxAttempts)
+        }
+
+	}
+
 	func startBleAdvertising() {
-		guard !isPreview && !isInErrorState else {
-			logger.info("Current status is \(status)")
+		guard !isPreview else {
+			logger.info("F: In preview!")
+			return
+		}
+		guard !isAdvertising else {
+			logger.info("F: Already advertising!")
 			return
 		}
 		if peripheralManager.state == .poweredOn {
-			logger.info("Peripheral manager powered on")
+			logger.info("F: Peripheral manager powered on")
 			error = nil
 			guard let uuid = deviceEngagement?.ble_uuid else {
-				logger.error("BLE initialization error")
+				logger.error("F: BLE initialization error")
 				return
 			}
 			buildServices(uuid: uuid)
@@ -202,7 +237,7 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		} else {
 			// once bt is powered on, advertise
 			if peripheralManager.state == .resetting { DispatchQueue.main.asyncAfter(deadline: .now()+1) { self.startBleAdvertising()} }
-			else { logger.info("Peripheral manager powered off") }
+			else { logger.info("F: Peripheral manager powered off") }
 		}
 	}
 
@@ -343,4 +378,3 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 
 
 }
-
