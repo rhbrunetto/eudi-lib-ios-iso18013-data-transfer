@@ -137,6 +137,12 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		public func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
 			let mdocCbc = MdocServiceCharacteristic(uuid: characteristic.uuid)
 			logger.info("Remote central \(central.identifier) disconnected for \(mdocCbc?.rawValue ?? "") characteristic")
+			if characteristic.uuid == MdocServiceCharacteristic.state.uuid || characteristic.uuid == MdocServiceCharacteristic.server2Client.uuid {
+				server.subscribeCount -= 1
+			}
+			if server.subscribeCount <= 0 && server.status != .disconnected && server.status != .error {
+				server.status = .disconnected
+			}
 		}
 	}
 
@@ -208,12 +214,34 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 
 	public func stop() {
 		guard !isPreview else { return }
-		if let peripheralManager, peripheralManager.isAdvertising { peripheralManager.stopAdvertising() }
+		// Phase A: Signal termination and prevent re-entrant callbacks
+		if let stateCharacteristic, let remoteCentral, let peripheralManager {
+			peripheralManager.updateValue(
+				Data([0x02]),
+				for: stateCharacteristic,
+				onSubscribedCentrals: [remoteCentral]
+			)
+		}
+		peripheralManager?.delegate = nil
 		qrCodePayload = nil
 		advertising = false
 		subscribeCount = 0
-		if let pk = deviceEngagement?.privateKey { Task { @MainActor in try? await pk.secureArea.deleteKeyBatch(id: pk.privateKeyId, startIndex: 0, batchSize: 1); deviceEngagement?.privateKey = nil } }
+		if let pk = deviceEngagement?.privateKey {
+			Task { @MainActor in
+				try? await pk.secureArea.deleteKeyBatch(id: pk.privateKeyId, startIndex: 0, batchSize: 1)
+				deviceEngagement?.privateKey = nil
+			}
+		}
 		if status == .error && initSuccess { status = .initializing }
+		// Phase B: Delay teardown so the 0x02 BLE notification can transmit
+		// removeAllServices() would discard the pending notification before the radio sends it
+		let pm = peripheralManager
+		peripheralManager = nil  // nil immediately to prevent reuse
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+			pm?.removeAllServices()
+			if pm?.isAdvertising == true { pm?.stopAdvertising() }
+			// pm goes out of scope here → CBPeripheralManager dealloc → BLE link teardown
+		}
 	}
 
 	fileprivate func initPeripheralManager() {
