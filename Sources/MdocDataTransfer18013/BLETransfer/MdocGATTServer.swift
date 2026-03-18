@@ -427,7 +427,7 @@ public class MdocGattServer: @unchecked Sendable, ObservableObject {
 		}
 	}
 
-	func sendDataWithUpdates() {
+	func sendDataWithUpdates(_ withDelay: Bool) {
 		guard !isPreview else {
 			return
 		}
