@@ -4,14 +4,14 @@
 import PackageDescription
 
 let package = Package(
-	name: "MdocDataTransfer18013",
-	platforms: [.macOS(.v13), .iOS(.v16), .watchOS(.v10)],
-	products: [
-		// Products define the executables and libraries a package produces, making them visible to other packages.
-		.library(
-			name: "MdocDataTransfer18013",
-			targets: ["MdocDataTransfer18013"])
-	],
+    name: "MdocDataTransfer18013",
+	platforms: [.macOS(.v14), .iOS(.v16), .watchOS(.v10)],
+    products: [
+        // Products define the executables and libraries a package produces, making them visible to other packages.
+        .library(
+            name: "MdocDataTransfer18013",
+            targets: ["MdocDataTransfer18013"]),
+    ],
 	dependencies: [
 		.package(url: "https://github.com/rhbrunetto/eudi-lib-ios-iso18013-security.git", branch: "fix/ble-large-payload")
 	],
