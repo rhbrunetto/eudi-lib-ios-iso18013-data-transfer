@@ -263,7 +263,7 @@ public class MdocHelpers {
 	///   - vc:  The view controller that will present the settings
 	///   - action: The action to perform
 	@MainActor
-	public static func checkCameraAccess(_ vc: UIViewController, action: @escaping ()->Void) {
+	public static func checkCameraAccess(_ vc: UIViewController, action: @Sendable @escaping ()->Void) {
 		switch AVCaptureDevice.authorizationStatus(for: .video) {
 		case .denied:
 			// "Denied, request permission from settings"
